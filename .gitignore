@@ -1,0 +1,23 @@
+# Dependencias
+node_modules/
+**/node_modules/
+
+# Archivos sensibles / credenciales
+.env
+**/.env
+.env.local
+.admin_token
+**/.admin_token
+
+# Build de producción (Vite)
+dist/
+**/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operativo / editor
+.DS_Store
+.vscode/
+.idea/
