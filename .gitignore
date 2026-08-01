@@ -6,10 +6,16 @@ node_modules/
 .env
 **/.env
 .env.local
+.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+**/.env.*
+!**/.env.example
 .admin_token
 **/.admin_token
 
-# Build de producción (Vite)
+# Build de producción
 dist/
 **/dist/
 
