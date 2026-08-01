@@ -1,5 +1,4 @@
 import https from "https";
-import fs from "fs";
 import { exec } from "child_process";
 import { env } from "../config/env.js";
 
@@ -51,15 +50,11 @@ function requestJson(url, options, body = null) {
 }
 
 export function loadAdminToken() {
-  try {
-    const token = fs.readFileSync(env.tokenFilePath, "utf8").trim();
-    if (token) {
-      adminToken = token;
-      console.log("Token de Admin API cargado desde archivo");
-      return token;
-    }
-  } catch {
-    // no existe el archivo, no importa
+  const token = env.adminAccessToken;
+  if (token) {
+    adminToken = token;
+    console.log("Token de Admin API cargado desde variables de entorno");
+    return token;
   }
 
   return null;
@@ -67,7 +62,6 @@ export function loadAdminToken() {
 
 export function setAdminToken(token) {
   adminToken = token;
-  fs.writeFileSync(env.tokenFilePath, token);
 }
 
 export function getAdminToken() {

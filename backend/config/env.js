@@ -1,11 +1,6 @@
 import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 export const env = {
   port: Number(process.env.PORT || 4000),
@@ -16,5 +11,5 @@ export const env = {
   scopes: process.env.SCOPES || "write_customers,read_customers,write_discounts",
   oauthRedirectUri: process.env.OAUTH_REDIRECT_URI || "http://localhost:4000/api/auth/callback",
   apiVersion: process.env.API_VERSION || "2024-10",
-  tokenFilePath: path.resolve(__dirname, "..", process.env.TOKEN_FILE || ".admin_token"),
+  adminAccessToken: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || process.env.ADMIN_ACCESS_TOKEN || process.env.ADMIN_API_TOKEN || null,
 };
