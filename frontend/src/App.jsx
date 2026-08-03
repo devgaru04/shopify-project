@@ -8,9 +8,11 @@ function App() {
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
+  const [discountCode, setDiscountCode] = useState("");
+  const [checkoutError, setCheckoutError] = useState("");
   const [selectedVariants, setSelectedVariants] = useState({});
   const [adminMsg, setAdminMsg] = useState(null);
-  const [adminLoading, setAdminLoading] = useState({ discount: false, register: false });
+  const [adminLoading, setAdminLoading] = useState({ discount: false, register: false, assign: false });
   const [registerForm, setRegisterForm] = useState({ email: "", firstName: "", lastName: "", password: "" });
   const [discountForm, setDiscountForm] = useState({
     code: "",
@@ -21,6 +23,36 @@ function App() {
     usageLimit: "",
     appliesOnEachItem: false,
   });
+  const [assignForm, setAssignForm] = useState({
+    customerEmail: "",
+    customerId: "",
+    code: "",
+    title: "",
+    type: "percentage",
+    value: "",
+    minimumSubtotal: "",
+    usageLimit: "",
+    productId: "",
+  });
+
+  const [createdCustomer, setCreatedCustomer] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [popupOpen, setPopupOpen] = useState({ register: false, discount: false, assign: false });
+
+  async function refreshCustomers() {
+    try {
+      const res = await fetch("/api/customers");
+      if (!res.ok) return;
+      const data = await res.json();
+      setCustomers(Array.isArray(data) ? data : []);
+    } catch {
+      setCustomers([]);
+    }
+  }
+
+  function handlePopupToggle(name, isOpen) {
+    setPopupOpen((prev) => ({ ...prev, [name]: isOpen }));
+  }
 
   useEffect(() => {
     fetch("/api/products")
@@ -36,19 +68,39 @@ function App() {
         setError(err.message);
         setLoading(false);
       });
+
+    refreshCustomers();
   }, []);
 
   function findSelectedVariant(product) {
     const selections = selectedVariants[product.id];
-    if (!selections || !product.variants?.edges) return null;
+    const availableVariants = (product.variants?.edges || [])
+      .map(({ node }) => node)
+      .filter((node) => node.availableForSale);
+
+    if (availableVariants.length === 0) return null;
+
+    if (!selections || Object.keys(selections).length === 0) {
+      return availableVariants.length === 1 ? availableVariants[0] : null;
+    }
+
     const optionCount = product.options?.length || 0;
     const selectedCount = Object.keys(selections).length;
-    if (selectedCount < optionCount) return null;
 
-    return product.variants.edges.find(({ node }) =>
-      node.availableForSale &&
-      node.selectedOptions.every((opt) => selections[opt.name] === opt.value)
-    )?.node || null;
+    if (selectedCount < optionCount) {
+      const partialMatches = availableVariants.filter((variant) =>
+        Object.entries(selections).every(([name, value]) =>
+          variant.selectedOptions.some((opt) => opt.name === name && opt.value === value)
+        )
+      );
+
+      if (partialMatches.length === 1) return partialMatches[0];
+      return null;
+    }
+
+    return availableVariants.find((variant) =>
+      variant.selectedOptions.every((opt) => selections[opt.name] === opt.value)
+    ) || null;
   }
 
   function handleOptionSelect(productId, optionName, value) {
@@ -91,6 +143,14 @@ function App() {
     setCart((prev) => prev.filter((item) => item.variantId !== variantId));
   }
 
+  function copyDiscountCode(code) {
+    if (!code) return;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(code);
+    }
+    setAdminMsg((prev) => (prev && prev.code === code ? { ...prev, copied: true } : prev));
+  }
+
   function updateQuantity(variantId, delta) {
     setCart((prev) =>
       prev
@@ -106,11 +166,13 @@ function App() {
   async function handleCheckout() {
     if (cart.length === 0) return;
     setCheckingOut(true);
+    setCheckoutError("");
     try {
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          discountCode,
           lines: cart.map((item) => ({
             merchandiseId: item.variantId,
             quantity: item.quantity,
@@ -128,7 +190,7 @@ function App() {
       if (!data.checkoutUrl) throw new Error("El checkout no tiene URL de redirección");
       window.location.href = data.checkoutUrl;
     } catch (err) {
-      alert("Error: " + err.message);
+      setCheckoutError(err.message);
       setCheckingOut(false);
     }
   }
@@ -147,7 +209,12 @@ function App() {
       let data;
       try { data = JSON.parse(text); } catch { data = null; }
       if (!res.ok) throw new Error(data?.error || data?.[0]?.message || "Error en la operación");
-      setAdminMsg({ type: "success", text: `Cupón "${discountForm.code}" creado con éxito` });
+      const createdCode = discountForm.code.trim().toUpperCase();
+      setAdminMsg({
+        type: "success",
+        text: `Tu código de descuento es ${createdCode}. Copia y úsalo en el carrito.`,
+        code: createdCode,
+      });
       setDiscountForm({ code: "", title: "", type: "percentage", value: "", minimumSubtotal: "", usageLimit: "", appliesOnEachItem: false });
     } catch (err) {
       setAdminMsg({ type: "error", text: err.message });
@@ -171,11 +238,62 @@ function App() {
       try { data = JSON.parse(text); } catch { data = null; }
       if (!res.ok) throw new Error(data?.error || "Error al registrar");
       setAdminMsg({ type: "success", text: `Cliente ${data.customer.email} registrado con éxito` });
+      setCreatedCustomer(data.customer);
       setRegisterForm({ email: "", firstName: "", lastName: "", password: "" });
+      await refreshCustomers();
     } catch (err) {
       setAdminMsg({ type: "error", text: err.message });
     } finally {
       setAdminLoading((prev) => ({ ...prev, register: false }));
+    }
+  }
+
+  async function handleAssignDiscount(e) {
+    e.preventDefault();
+    setAdminMsg(null);
+    setAdminLoading((prev) => ({ ...prev, assign: true }));
+    try {
+      const selectedCustomerId = assignForm.customerId?.trim();
+      const selectedCustomer = selectedCustomerId
+        ? customers.find((customer) => customer.id === selectedCustomerId)
+        : null;
+
+      if (!selectedCustomerId || !selectedCustomer) {
+        throw new Error("Selecciona un cliente guardado para asignar el descuento");
+      }
+
+      const payload = {
+        ...assignForm,
+        customerEmail: selectedCustomer.email || "",
+        customerId: selectedCustomer.id,
+      };
+
+      const res = await fetch("/api/assign-discount-to-customer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = null; }
+      if (!res.ok) throw new Error(data?.error || data?.[0]?.message || "Error al asignar el descuento");
+      setAdminMsg({ type: "success", text: `Cupón ${data.discountCode} asignado a ${selectedCustomer.email || selectedCustomer.id}` });
+      setAssignForm({
+        customerEmail: "",
+        customerId: "",
+        code: "",
+        title: "",
+        type: "percentage",
+        value: "",
+        minimumSubtotal: "",
+        usageLimit: "",
+        productId: "",
+      });
+      await refreshCustomers();
+    } catch (err) {
+      setAdminMsg({ type: "error", text: err.message });
+    } finally {
+      setAdminLoading((prev) => ({ ...prev, assign: false }));
     }
   }
 
@@ -194,9 +312,24 @@ function App() {
         <h1>Capillus Store</h1>
         <p>Productos disponibles</p>
         <div className="admin-actions">
-          <details className="register-form-details">
+          <details
+            className="register-form-details"
+            open={popupOpen.register}
+            onToggle={(e) => handlePopupToggle("register", e.currentTarget.open)}
+          >
             <summary className="admin-btn">Registrarse como Cliente</summary>
             <form className="register-form" onSubmit={handleRegister}>
+              <button
+                type="button"
+                className="popup-close-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handlePopupToggle("register", false);
+                }}
+              >
+                ✕
+              </button>
               <input
                 type="email"
                 placeholder="Email *"
@@ -228,9 +361,24 @@ function App() {
               </button>
             </form>
           </details>
-          <details className="register-form-details">
+          <details
+            className="register-form-details"
+            open={popupOpen.discount}
+            onToggle={(e) => handlePopupToggle("discount", e.currentTarget.open)}
+          >
             <summary className="admin-btn">Crear Cupón de Descuento</summary>
             <form className="register-form discount-form" onSubmit={handleCreateDiscount}>
+              <button
+                type="button"
+                className="popup-close-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handlePopupToggle("discount", false);
+                }}
+              >
+                ✕
+              </button>
               <input
                 type="text"
                 placeholder="Código del cupón *"
@@ -291,9 +439,107 @@ function App() {
               </button>
             </form>
           </details>
+          <details
+            className="register-form-details"
+            open={popupOpen.assign}
+            onToggle={(e) => handlePopupToggle("assign", e.currentTarget.open)}
+          >
+            <summary className="admin-btn">Asignar Cupón a Cliente</summary>
+            <form className="register-form discount-form" onSubmit={handleAssignDiscount}>
+              <button
+                type="button"
+                className="popup-close-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handlePopupToggle("assign", false);
+                }}
+              >
+                ✕
+              </button>
+              <select
+                value={assignForm.customerId}
+                onChange={(e) => setAssignForm({ ...assignForm, customerId: e.target.value })}
+              >
+                <option value="">Selecciona un cliente guardado</option>
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.email || customer.firstName || customer.lastName ? `${customer.email || "Sin email"}` : customer.id}
+                  </option>
+                ))}
+              </select>
+              <p className="helper-text">Selecciona un cliente guardado para asignar el descuento.</p>
+              <input
+                type="text"
+                placeholder="Código del cupón *"
+                value={assignForm.code}
+                onChange={(e) => setAssignForm({ ...assignForm, code: e.target.value })}
+                required
+              />
+              <input
+                type="text"
+                placeholder="Título *"
+                value={assignForm.title}
+                onChange={(e) => setAssignForm({ ...assignForm, title: e.target.value })}
+                required
+              />
+              <select
+                value={assignForm.type}
+                onChange={(e) => setAssignForm({ ...assignForm, type: e.target.value })}
+              >
+                <option value="percentage">Porcentaje (%)</option>
+                <option value="fixed">Monto Fijo ($)</option>
+              </select>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder={assignForm.type === "percentage" ? "Porcentaje * (ej: 20)" : "Monto * (ej: 50.00)"}
+                value={assignForm.value}
+                onChange={(e) => setAssignForm({ ...assignForm, value: e.target.value })}
+                required
+              />
+              <select
+                value={assignForm.productId}
+                onChange={(e) => setAssignForm({ ...assignForm, productId: e.target.value })}
+              >
+                <option value="">Sin producto específico</option>
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.title}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder="Monto mínimo de pedido (opcional)"
+                value={assignForm.minimumSubtotal}
+                onChange={(e) => setAssignForm({ ...assignForm, minimumSubtotal: e.target.value })}
+              />
+              <input
+                type="number"
+                min="1"
+                placeholder="Límite de usos (opcional)"
+                value={assignForm.usageLimit}
+                onChange={(e) => setAssignForm({ ...assignForm, usageLimit: e.target.value })}
+              />
+              <button type="submit" disabled={adminLoading.assign}>
+                {adminLoading.assign ? "Asignando..." : "Asignar Cupón"}
+              </button>
+            </form>
+          </details>
         </div>
         {adminMsg && (
-          <p className={`admin-msg ${adminMsg.type}`}>{adminMsg.text}</p>
+          <div className={`admin-msg ${adminMsg.type}`}>
+            <p>{adminMsg.text}</p>
+            {adminMsg.code && (
+              <button type="button" className="copy-code-btn" onClick={() => copyDiscountCode(adminMsg.code)}>
+                {adminMsg.copied ? "¡Copiado!" : "Copiar código"}
+              </button>
+            )}
+          </div>
         )}
       </header>
 
@@ -345,6 +591,20 @@ function App() {
               ))}
             </ul>
             <div className="cart-footer">
+              <label className="discount-label" htmlFor="discount-code">
+                Código de descuento
+              </label>
+              <div className="discount-form">
+                <input
+                  id="discount-code"
+                  type="text"
+                  value={discountCode}
+                  onChange={(event) => setDiscountCode(event.target.value.toUpperCase())}
+                  placeholder="Ej.: LIBRO10"
+                  disabled={checkingOut}
+                />
+              </div>
+              {checkoutError && <p className="checkout-error">{checkoutError}</p>}
               <div className="cart-total">
                 <span>Total</span>
                 <span>

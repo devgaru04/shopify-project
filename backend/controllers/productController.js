@@ -125,10 +125,12 @@ export async function getProductByHandle(req, res) {
 
 export async function createCheckout(req, res) {
   try {
-    const { lines } = req.body;
+    const { lines, discountCode } = req.body;
     if (!lines || lines.length === 0) {
       return res.status(400).json({ error: "El carrito está vacío" });
     }
+
+    const normalizedDiscountCode = typeof discountCode === "string" ? discountCode.trim() : "";
 
     const query = `
       mutation CartCreate($input: CartInput!) {
@@ -190,6 +192,7 @@ export async function createCheckout(req, res) {
           merchandiseId: line.merchandiseId,
           quantity: line.quantity,
         })),
+        discountCodes: normalizedDiscountCode ? [normalizedDiscountCode] : undefined,
       },
     });
 
@@ -205,7 +208,19 @@ export async function createCheckout(req, res) {
       return res.status(500).json({ error: "No se pudo crear el carrito en Shopify" });
     }
 
-    res.json(data.cartCreate.cart);
+    let cart = data.cartCreate.cart;
+
+    if (normalizedDiscountCode) {
+      const checkoutUrl = new URL(cart.checkoutUrl);
+      checkoutUrl.searchParams.set("discount", normalizedDiscountCode);
+      checkoutUrl.searchParams.set("discount_code", normalizedDiscountCode);
+      cart = {
+        ...cart,
+        checkoutUrl: checkoutUrl.toString(),
+      };
+    }
+
+    res.json(cart);
   } catch (error) {
     console.error("Error /api/checkout:", error.message);
     res.status(500).json({ error: error.message });
