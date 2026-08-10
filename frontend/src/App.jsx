@@ -12,7 +12,7 @@ function App() {
   const [checkoutError, setCheckoutError] = useState("");
   const [selectedVariants, setSelectedVariants] = useState({});
   const [adminMsg, setAdminMsg] = useState(null);
-  const [adminLoading, setAdminLoading] = useState({ discount: false, register: false, assign: false });
+  const [adminLoading, setAdminLoading] = useState({ discount: false, register: false, assign: false, storeCredit: false });
   const [registerForm, setRegisterForm] = useState({ email: "", firstName: "", lastName: "", password: "" });
   const [discountForm, setDiscountForm] = useState({
     code: "",
@@ -22,6 +22,8 @@ function App() {
     minimumSubtotal: "",
     usageLimit: "",
     appliesOnEachItem: false,
+    tags: "",
+    timelineComment: "",
   });
   const [assignForm, setAssignForm] = useState({
     customerEmail: "",
@@ -33,15 +35,24 @@ function App() {
     minimumSubtotal: "",
     usageLimit: "",
     productId: "",
+    tags: "",
+    timelineComment: "",
+    readOnlyEmail: false,
   });
+  const [assignCustomerMode, setAssignCustomerMode] = useState("select");
+  const [orderSearchForm, setOrderSearchForm] = useState({ orderNumber: "" });
+  const [orderSearchResult, setOrderSearchResult] = useState(null);
+  const [orderSearchError, setOrderSearchError] = useState("");
+  const [orderSearchLoading, setOrderSearchLoading] = useState(false);
 
   const [createdCustomer, setCreatedCustomer] = useState(null);
   const [customers, setCustomers] = useState([]);
-  const [popupOpen, setPopupOpen] = useState({ register: false, discount: false, assign: false });
+  const [popupOpen, setPopupOpen] = useState({ register: false, discount: false, assign: false, storeCredit: false, orderSearch: false });
+  const [storeCreditForm, setStoreCreditForm] = useState({ customerId: "", amount: "", currency: "USD" });
 
   async function refreshCustomers() {
     try {
-      const res = await fetch("/api/customers");
+      const res = await fetch("/api/shopify-customers?first=250");
       if (!res.ok) return;
       const data = await res.json();
       setCustomers(Array.isArray(data) ? data : []);
@@ -215,7 +226,7 @@ function App() {
         text: `Tu código de descuento es ${createdCode}. Copia y úsalo en el carrito.`,
         code: createdCode,
       });
-      setDiscountForm({ code: "", title: "", type: "percentage", value: "", minimumSubtotal: "", usageLimit: "", appliesOnEachItem: false });
+      setDiscountForm({ code: "", title: "", type: "percentage", value: "", minimumSubtotal: "", usageLimit: "", appliesOnEachItem: false, tags: "", timelineComment: "" });
     } catch (err) {
       setAdminMsg({ type: "error", text: err.message });
     } finally {
@@ -248,24 +259,95 @@ function App() {
     }
   }
 
+  async function handleSearchOrder(e) {
+    e.preventDefault();
+    setOrderSearchError("");
+    setOrderSearchResult(null);
+    setOrderSearchLoading(true);
+    try {
+      const res = await fetch("/api/find-customer-by-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderNumber: orderSearchForm.orderNumber }),
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = null; }
+      if (!res.ok) throw new Error(data?.error || "No se encontró la orden");
+      setOrderSearchResult(data.order || null);
+    } catch (err) {
+      setOrderSearchError(err.message);
+    } finally {
+      setOrderSearchLoading(false);
+    }
+  }
+
+  function handleUseOrderCustomer() {
+    if (!orderSearchResult) return;
+
+    const customer = orderSearchResult.customer;
+    const customerEmail = customer?.email || orderSearchResult.email || "";
+
+    setAssignCustomerMode("email");
+    setAssignForm((prev) => ({
+      ...prev,
+      customerId: "",
+      customerEmail,
+      readOnlyEmail: true,
+    }));
+    setPopupOpen((prev) => ({ ...prev, orderSearch: false, assign: true }));
+    setAdminMsg({ type: "success", text: "Datos cargados desde la orden. Completa el cupón para asignarlo." });
+  }
+
   async function handleAssignDiscount(e) {
     e.preventDefault();
     setAdminMsg(null);
     setAdminLoading((prev) => ({ ...prev, assign: true }));
     try {
-      const selectedCustomerId = assignForm.customerId?.trim();
-      const selectedCustomer = selectedCustomerId
-        ? customers.find((customer) => customer.id === selectedCustomerId)
-        : null;
+      let resolvedCustomerId = assignForm.customerId?.trim();
+      let resolvedCustomerEmail = assignForm.customerEmail?.trim();
 
-      if (!selectedCustomerId || !selectedCustomer) {
-        throw new Error("Selecciona un cliente guardado para asignar el descuento");
+      if (assignCustomerMode === "email") {
+        if (!resolvedCustomerEmail) {
+          throw new Error("Ingresa el email del cliente para asignar el descuento");
+        }
+
+        const customerRes = await fetch("/api/find-or-create-customer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: resolvedCustomerEmail,
+            firstName: "Cliente",
+            lastName: "Creado",
+            password: "123456",
+          }),
+        });
+
+        const text = await customerRes.text();
+        let customerData;
+        try { customerData = JSON.parse(text); } catch { customerData = null; }
+
+        if (!customerRes.ok) {
+          throw new Error(customerData?.error || customerData?.message || "Error al buscar o crear el cliente");
+        }
+
+        resolvedCustomerId = customerData?.customer?.id;
+        resolvedCustomerEmail = customerData?.customer?.email || resolvedCustomerEmail;
+        if (!resolvedCustomerId) {
+          throw new Error("No se pudo obtener el ID del cliente");
+        }
       }
+
+      if (!resolvedCustomerId) {
+        throw new Error("Selecciona un cliente guardado o ingresa un email válido");
+      }
+
+      const selectedCustomer = customers.find((customer) => customer.id === resolvedCustomerId);
 
       const payload = {
         ...assignForm,
-        customerEmail: selectedCustomer.email || "",
-        customerId: selectedCustomer.id,
+        customerEmail: selectedCustomer?.email || resolvedCustomerEmail || "",
+        customerId: resolvedCustomerId,
       };
 
       const res = await fetch("/api/assign-discount-to-customer", {
@@ -277,7 +359,11 @@ function App() {
       let data;
       try { data = JSON.parse(text); } catch { data = null; }
       if (!res.ok) throw new Error(data?.error || data?.[0]?.message || "Error al asignar el descuento");
-      setAdminMsg({ type: "success", text: `Cupón ${data.discountCode} asignado a ${selectedCustomer.email || selectedCustomer.id}` });
+
+      setAdminMsg({
+        type: "success",
+        text: `Cupón ${data.discountCode} asignado a ${selectedCustomer?.email || resolvedCustomerEmail || resolvedCustomerId}`,
+      });
       setAssignForm({
         customerEmail: "",
         customerId: "",
@@ -288,7 +374,11 @@ function App() {
         minimumSubtotal: "",
         usageLimit: "",
         productId: "",
+        tags: "",
+        timelineComment: "",
+        readOnlyEmail: false,
       });
+      setAssignCustomerMode("select");
       await refreshCustomers();
     } catch (err) {
       setAdminMsg({ type: "error", text: err.message });
@@ -297,11 +387,49 @@ function App() {
     }
   }
 
+  async function handleAssignStoreCredit(e) {
+    e.preventDefault();
+    setAdminMsg(null);
+    setAdminLoading((prev) => ({ ...prev, storeCredit: true }));
+    try {
+      const customerId = storeCreditForm.customerId?.trim();
+      const amount = Number(storeCreditForm.amount);
+      if (!customerId) {
+        throw new Error("Selecciona un cliente guardado para asignar el crédito");
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Ingresa un monto válido mayor a cero");
+      }
+
+      const res = await fetch("/api/assign-store-credit-to-customer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId,
+          amount,
+          currency: storeCreditForm.currency,
+        }),
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = null; }
+      if (!res.ok) throw new Error(data?.error || "Error al asignar el crédito de tienda");
+      setAdminMsg({ type: "success", text: `Crédito de tienda asignado correctamente al cliente seleccionado` });
+      setStoreCreditForm({ customerId: "", amount: "", currency: "USD" });
+      await refreshCustomers();
+    } catch (err) {
+      setAdminMsg({ type: "error", text: err.message });
+    } finally {
+      setAdminLoading((prev) => ({ ...prev, storeCredit: false }));
+    }
+  }
+
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce(
     (sum, item) => sum + parseFloat(item.price) * item.quantity,
     0
   );
+  const customerCount = customers.length;
 
   if (loading) return <div className="loader">Cargando productos...</div>;
   if (error) return <div className="error">Error: {error}</div>;
@@ -434,8 +562,70 @@ function App() {
                 value={discountForm.usageLimit}
                 onChange={(e) => setDiscountForm({ ...discountForm, usageLimit: e.target.value })}
               />
+              <input
+                type="text"
+                placeholder="Etiquetas (separadas por comas)"
+                value={discountForm.tags}
+                onChange={(e) => setDiscountForm({ ...discountForm, tags: e.target.value })}
+              />
+              <textarea
+                placeholder="Comentario de cronología (opcional)"
+                rows="2"
+                value={discountForm.timelineComment}
+                onChange={(e) => setDiscountForm({ ...discountForm, timelineComment: e.target.value })}
+              />
               <button type="submit" disabled={adminLoading.discount}>
                 {adminLoading.discount ? "Generando..." : "Crear Cupón"}
+              </button>
+            </form>
+          </details>
+          <details
+            className="register-form-details"
+            open={popupOpen.storeCredit}
+            onToggle={(e) => handlePopupToggle("storeCredit", e.currentTarget.open)}
+          >
+            <summary className="admin-btn">Crédito de Tienda</summary>
+            <form className="register-form discount-form" onSubmit={handleAssignStoreCredit}>
+              <button
+                type="button"
+                className="popup-close-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handlePopupToggle("storeCredit", false);
+                }}
+              >
+                ✕
+              </button>
+              <select
+                value={storeCreditForm.customerId}
+                onChange={(e) => setStoreCreditForm({ ...storeCreditForm, customerId: e.target.value })}
+              >
+                <option value="">Selecciona un cliente</option>
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.email || customer.firstName || customer.lastName || customer.id}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder="Monto del crédito *"
+                value={storeCreditForm.amount}
+                onChange={(e) => setStoreCreditForm({ ...storeCreditForm, amount: e.target.value })}
+                required
+              />
+              <select
+                value={storeCreditForm.currency}
+                onChange={(e) => setStoreCreditForm({ ...storeCreditForm, currency: e.target.value })}
+              >
+                <option value="USD">USD</option>
+                <option value="COP">COP</option>
+              </select>
+              <button type="submit" disabled={adminLoading.storeCredit}>
+                {adminLoading.storeCredit ? "Asignando..." : "Asignar Crédito"}
               </button>
             </form>
           </details>
@@ -457,18 +647,60 @@ function App() {
               >
                 ✕
               </button>
-              <select
-                value={assignForm.customerId}
-                onChange={(e) => setAssignForm({ ...assignForm, customerId: e.target.value })}
-              >
-                <option value="">Selecciona un cliente guardado</option>
-                {customers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.email || customer.firstName || customer.lastName ? `${customer.email || "Sin email"}` : customer.id}
-                  </option>
-                ))}
-              </select>
-              <p className="helper-text">Selecciona un cliente guardado para asignar el descuento.</p>
+              <div className="assign-mode-group">
+                <button
+                  type="button"
+                  className={`assign-mode-btn ${assignCustomerMode === "select" ? "active" : ""}`}
+                  onClick={() => {
+                    setAssignCustomerMode("select");
+                    setAssignForm({ ...assignForm, customerEmail: "", readOnlyEmail: false });
+                  }}
+                >
+                  Seleccionar cliente
+                </button>
+                <button
+                  type="button"
+                  className={`assign-mode-btn ${assignCustomerMode === "email" ? "active" : ""}`}
+                  onClick={() => {
+                    setAssignCustomerMode("email");
+                    setAssignForm({ ...assignForm, customerId: "", readOnlyEmail: false });
+                  }}
+                >
+                  Ingresar cliente
+                </button>
+              </div>
+              {assignCustomerMode === "select" ? (
+                <>
+                  <select
+                    value={assignForm.customerId}
+                    onChange={(e) => setAssignForm({ ...assignForm, customerId: e.target.value })}
+                  >
+                    <option value="">Selecciona un cliente guardado</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.email || customer.firstName || customer.lastName ? `${customer.email || "Sin email"}` : customer.id}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="helper-text">Selecciona un cliente guardado para asignar el descuento.</p>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="email"
+                    placeholder="Email del cliente *"
+                    value={assignForm.customerEmail}
+                    onChange={(e) => setAssignForm({ ...assignForm, customerEmail: e.target.value })}
+                    required
+                    disabled={assignForm.readOnlyEmail}
+                  />
+                  <p className="helper-text">
+                    {assignForm.readOnlyEmail
+                      ? "El email viene de la orden y no puede editarse."
+                      : "Ingresa el email del cliente. Si no existe, se creará automáticamente."}
+                  </p>
+                </>
+              )}
               <input
                 type="text"
                 placeholder="Código del cupón *"
@@ -525,9 +757,67 @@ function App() {
                 value={assignForm.usageLimit}
                 onChange={(e) => setAssignForm({ ...assignForm, usageLimit: e.target.value })}
               />
+              <input
+                type="text"
+                placeholder="Etiquetas (separadas por comas)"
+                value={assignForm.tags}
+                onChange={(e) => setAssignForm({ ...assignForm, tags: e.target.value })}
+              />
+              <textarea
+                placeholder="Comentario de cronología (opcional)"
+                rows="2"
+                value={assignForm.timelineComment}
+                onChange={(e) => setAssignForm({ ...assignForm, timelineComment: e.target.value })}
+              />
               <button type="submit" disabled={adminLoading.assign}>
                 {adminLoading.assign ? "Asignando..." : "Asignar Cupón"}
               </button>
+            </form>
+          </details>
+          <details
+            className="register-form-details"
+            open={popupOpen.orderSearch}
+            onToggle={(e) => handlePopupToggle("orderSearch", e.currentTarget.open)}
+          >
+            <summary className="admin-btn">Buscar Cliente por Orden</summary>
+            <form className="register-form discount-form" onSubmit={handleSearchOrder}>
+              <button
+                type="button"
+                className="popup-close-btn"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handlePopupToggle("orderSearch", false);
+                }}
+              >
+                ✕
+              </button>
+              <input
+                type="text"
+                placeholder="Número de orden (#1004)"
+                value={orderSearchForm.orderNumber}
+                onChange={(e) => setOrderSearchForm({ orderNumber: e.target.value })}
+                required
+              />
+              <button type="submit" disabled={orderSearchLoading}>
+                {orderSearchLoading ? "Buscando..." : "Buscar Orden"}
+              </button>
+              {orderSearchError && <p className="helper-text error">{orderSearchError}</p>}
+              {orderSearchResult && (
+                <div className="order-search-result" style={{color: "#1a1a2e", textAlign: "left"}}>
+                  <p><strong>Orden:</strong> {orderSearchResult.name}</p>
+                  <p><strong>Nombre completo:</strong> {`${orderSearchResult.customer?.firstName || ""} ${orderSearchResult.customer?.lastName || ""}`.trim() || "No disponible"}</p>
+                  <p><strong>Correo:</strong> {orderSearchResult.customer?.email || orderSearchResult.email || "No disponible"}</p>
+                  <button
+                    type="button"
+                    className="popup-close-btn"
+                    onClick={handleUseOrderCustomer}
+                    disabled={!orderSearchResult.customer?.email && !orderSearchResult.email}
+                  >
+                    Asignar un descuento a este cliente
+                  </button>
+                </div>
+              )}
             </form>
           </details>
         </div>
@@ -542,6 +832,26 @@ function App() {
           </div>
         )}
       </header>
+
+      <section className="customers-panel">
+        <div className="customers-panel-header">
+          <h2>Clientes de Shopify</h2>
+          <span className="customers-count">{customerCount}</span>
+        </div>
+        <div className="customers-grid">
+          {customers.map((customer) => (
+            <article key={customer.id} className="customer-card">
+              <div className="customer-card-email">{customer.email || "Sin email"}</div>
+              <div className="customer-card-name">
+                {customer.firstName || customer.lastName
+                  ? `${customer.firstName || ""} ${customer.lastName || ""}`.trim()
+                  : "Cliente"}
+              </div>
+              <div className="customer-card-id">{customer.id}</div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <button className="cart-toggle" onClick={() => setCartOpen(!cartOpen)}>
         {cartOpen ? "Cerrar" : "Carrito"}

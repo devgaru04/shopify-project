@@ -11,6 +11,7 @@ async function createDiscountCode(payload) {
     appliesOnEachItem,
     customerId,
     productId,
+    tags,
   } = payload;
 
   if (!code || !title || !type || value === undefined || value === "") {
@@ -63,6 +64,17 @@ async function createDiscountCode(payload) {
     variables.basicCodeDiscount.usageLimit = parseInt(usageLimit);
   }
 
+  if (tags && typeof tags === "string") {
+    const parsedTags = tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    if (parsedTags.length > 0) {
+      variables.basicCodeDiscount.tags = parsedTags;
+    }
+  }
+
   const mutation = `
     mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
       discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
@@ -101,12 +113,140 @@ async function createDiscountCode(payload) {
   };
 }
 
+async function saveDiscountMetafieldNote(resourceId, comment) {
+  if (!resourceId || !comment || comment.trim() === "") {
+    return { success: true };
+  }
+
+  const mutation = `
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields {
+          id
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    metafields: [
+      {
+        ownerId: resourceId,
+        namespace: "app",
+        key: "timeline_comment",
+        type: "multi_line_text_field",
+        value: comment.trim(),
+      },
+    ],
+  };
+
+  const data = await adminFetch(mutation, variables);
+
+  if (data.metafieldsSet.userErrors.length) {
+    return {
+      success: false,
+      errors: data.metafieldsSet.userErrors,
+    };
+  }
+
+  return { success: true };
+}
+
+async function addTimelineComment(resourceId, comment) {
+  if (!resourceId || !comment || comment.trim() === "") {
+    return { success: true };
+  }
+
+  const mutation = `
+    mutation commentEventCreate($input: CommentEventCreateInput!) {
+      commentEventCreate(input: $input) {
+        commentEvent {
+          id
+          rawMessage
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const input = {
+    subjectId: resourceId,
+    body: comment.trim(),
+  };
+
+  try {
+    const data = await adminFetch(mutation, { input });
+
+    if (data.commentEventCreate.userErrors.length) {
+      return {
+        success: false,
+        errors: data.commentEventCreate.userErrors,
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    const lower = error.message.toLowerCase();
+    const unsupported =
+      lower.includes("unknown field") ||
+      lower.includes("commenteventcreate") ||
+      lower.includes("commenteventcreateinput") ||
+      lower.includes("cannot query field") ||
+      lower.includes("field \"commenteventcreate\" not found");
+
+    if (unsupported) {
+      const fallbackResult = await saveDiscountMetafieldNote(resourceId, comment);
+      if (fallbackResult.success) {
+        return { success: true, fallback: true };
+      }
+      return fallbackResult;
+    }
+
+    return {
+      success: false,
+      unsupported,
+      error: error.message,
+    };
+  }
+}
+
 export async function createDiscount(req, res) {
   try {
-    const result = await createDiscountCode(req.body);
+    const { tags, timelineComment, ...payload } = req.body;
+    const result = await createDiscountCode({ ...payload, tags });
 
     if (!result.success) {
       return res.status(400).json(result.errors);
+    }
+
+    if (timelineComment && timelineComment.trim()) {
+      const createdDiscountNodeId = result.discount?.codeDiscountNode?.id;
+      if (createdDiscountNodeId) {
+        const commentResult = await addTimelineComment(createdDiscountNodeId, timelineComment);
+        if (!commentResult.success) {
+          if (commentResult.unsupported) {
+            console.warn("Timeline comment unsupported:", commentResult.error);
+            return res.json({
+              ...result,
+              warning: "El descuento se creó, pero Shopify no admite comentarios de cronología sobre descuentos. La nota se guardó como metafield del descuento.",
+            });
+          }
+          return res.status(400).json(commentResult.errors);
+        }
+        if (commentResult.fallback) {
+          return res.json({
+            ...result,
+            warning: "El descuento se creó y se guardó la nota como metafield porque la mutación de comentario no está disponible para descuentos.",
+          });
+        }
+      }
     }
 
     res.json(result);
@@ -118,7 +258,7 @@ export async function createDiscount(req, res) {
 
 export async function assignDiscountToCustomer(req, res) {
   try {
-    const { customerEmail, customerId, ...payload } = req.body;
+    const { customerEmail, customerId, tags, timelineComment, ...payload } = req.body;
 
     if (!customerEmail && !customerId) {
       return res.status(400).json({ error: "customerEmail o customerId es requerido" });
@@ -141,10 +281,37 @@ export async function assignDiscountToCustomer(req, res) {
       resolvedCustomerId = `gid://shopify/Customer/${resolvedCustomerId}`;
     }
 
-    const result = await createDiscountCode({ ...payload, customerId: resolvedCustomerId });
+    const result = await createDiscountCode({ ...payload, customerId: resolvedCustomerId, tags });
 
     if (!result.success) {
       return res.status(400).json(result.errors);
+    }
+
+    if (timelineComment && timelineComment.trim()) {
+      const createdDiscountNodeId = result.discount?.codeDiscountNode?.id;
+      if (createdDiscountNodeId) {
+        const commentResult = await addTimelineComment(createdDiscountNodeId, timelineComment);
+        if (!commentResult.success) {
+          if (commentResult.unsupported) {
+            console.warn("Timeline comment unsupported:", commentResult.error);
+            return res.json({
+              ...result,
+              customerEmail,
+              customerId: resolvedCustomerId,
+              warning: "El descuento se creó, pero Shopify no admite comentarios de cronología sobre descuentos. La nota se guardó como metafield del descuento.",
+            });
+          }
+          return res.status(400).json(commentResult.errors);
+        }
+        if (commentResult.fallback) {
+          return res.json({
+            ...result,
+            customerEmail,
+            customerId: resolvedCustomerId,
+            warning: "El descuento se creó y se guardó la nota como metafield porque la mutación de comentario no está disponible para descuentos.",
+          });
+        }
+      }
     }
 
     res.json({ ...result, customerEmail, customerId: resolvedCustomerId });
