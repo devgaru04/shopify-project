@@ -1,5 +1,6 @@
 import { adminFetch } from "./shopifyService.js";
 
+// Normaliza un customerId o GID parcial a un GID válido de Shopify.
 function normalizeCustomerId(customerId) {
   if (!customerId) return null;
   if (typeof customerId === "string" && customerId.startsWith("gid://shopify/Customer/")) {

@@ -8,10 +8,12 @@ import {
   setAdminToken,
 } from "../services/shopifyService.js";
 
+// Redirige al usuario a la URL de autorización de Shopify para obtener permisos.
 export function redirectToAuth(req, res) {
   res.redirect(getAuthUrl());
 }
 
+// Callback OAuth. Intercambia el código recibido por un token de Admin API.
 export async function authCallback(req, res) {
   try {
     const { code } = req.query;
@@ -40,6 +42,7 @@ export async function authCallback(req, res) {
   }
 }
 
+// Devuelve el token de Admin API cargado en memoria, si existe.
 export function getAuthToken(req, res) {
   const token = getAdminToken();
   if (!token) {

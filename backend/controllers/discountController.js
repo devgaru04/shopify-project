@@ -1,5 +1,7 @@
 import { adminFetch } from "../services/shopifyService.js";
 
+// Crea el payload de descuento y ejecuta la mutación de Shopify.
+// Retorna el resultado básico de la creación del descuento.
 async function createDiscountCode(payload) {
   const {
     code,
@@ -26,11 +28,11 @@ async function createDiscountCode(payload) {
     type === "percentage"
       ? { percentage: parseFloat(value) }
       : {
-          discountAmount: {
-            amount: parseFloat(value).toFixed(2),
-            appliesOnEachItem: !!appliesOnEachItem,
-          },
-        };
+        discountAmount: {
+          amount: parseFloat(value).toFixed(2),
+          appliesOnEachItem: !!appliesOnEachItem,
+        },
+      };
 
   const variables = {
     basicCodeDiscount: {
@@ -39,13 +41,13 @@ async function createDiscountCode(payload) {
       startsAt: new Date().toISOString(),
       customerSelection: customerId
         ? {
-            customers: {
-              add: [customerId],
-            },
-          }
-        : {
-            all: true,
+          customers: {
+            add: [customerId],
           },
+        }
+        : {
+          all: true,
+        },
       customerGets: {
         items: productId ? { all: true } : { all: true },
         value: customerGetsValue,
@@ -113,6 +115,7 @@ async function createDiscountCode(payload) {
   };
 }
 
+// Guarda un comentario en un metafield del recurso cuando el comentario nativo no está disponible.
 async function saveDiscountMetafieldNote(resourceId, comment) {
   if (!resourceId || !comment || comment.trim() === "") {
     return { success: true };
@@ -156,6 +159,8 @@ async function saveDiscountMetafieldNote(resourceId, comment) {
   return { success: true };
 }
 
+// Intenta añadir un commentEvent en Shopify para el recurso.
+// Si la API no soporta este tipo de comentario, hace fallback a un metafield.
 async function addTimelineComment(resourceId, comment) {
   if (!resourceId || !comment || comment.trim() === "") {
     return { success: true };
@@ -323,124 +328,7 @@ export async function assignDiscountToCustomer(req, res) {
 
 export async function debugDiscountSchema(req, res) {
   try {
-    /* const query = `
-      query {
-        customerGetsValue: __type(name: "DiscountCustomerGetsValueInput") {
-          name
-          inputFields {
-            name
-            type {
-              kind
-              name
-              ofType {
-                kind
-                name
-              }
-            }
-          }
-        }
 
-        discountBasicInput: __type(name: "DiscountCodeBasicInput") {
-          name
-          inputFields {
-            name
-            type {
-              kind
-              name
-              ofType {
-                kind
-                name
-              }
-            }
-          }
-        }
-
-        discountNode: __type(name: "DiscountCodeBasic") {
-          name
-          fields {
-            name
-            type {
-              kind
-              name
-              ofType {
-                kind
-                name
-              }
-            }
-          }
-        }
-      }
-    `; */
-
-    /* const query = `
-query {
-
-  customerGetsValue: __type(name: "DiscountCustomerGetsValueInput") {
-    name
-    inputFields {
-      name
-      type {
-        kind
-        name
-        ofType {
-          kind
-          name
-        }
-      }
-    }
-  }
-
-  discountBasicInput: __type(name: "DiscountCodeBasicInput") {
-    name
-    inputFields {
-      name
-      type {
-        kind
-        name
-        ofType {
-          kind
-          name
-        }
-      }
-    }
-  }
-
-  discountContextInput: __type(name: "DiscountContextInput") {
-    name
-    inputFields {
-      name
-      type {
-        kind
-        name
-        ofType {
-          kind
-          name
-          ofType {
-            kind
-            name
-          }
-        }
-      }
-    }
-  }
-
-  discountNode: __type(name: "DiscountCodeBasic") {
-    name
-    fields {
-      name
-      type {
-        kind
-        name
-        ofType {
-          kind
-          name
-        }
-      }
-    }
-  }
-
-}
-`; */
     const query = `
 query {
 

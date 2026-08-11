@@ -1,5 +1,6 @@
 import { shopifyFetch } from "../services/shopifyService.js";
 
+// Controlador para consultar productos desde Shopify Storefront.
 export async function getProducts(req, res) {
   try {
     const query = `

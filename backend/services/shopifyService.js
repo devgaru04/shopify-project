@@ -2,8 +2,12 @@ import https from "https";
 import { exec } from "child_process";
 import { env } from "../config/env.js";
 
+// Servicio central para todas las llamadas a Shopify.
+// Aquí se manejan Storefront API y Admin API, así como la obtención de tokens.
 let adminToken = null;
 
+// requestJson es el helper HTTP que envía peticiones JSON a Shopify.
+// Recibe una URL, headers y payload JSON, y parsea la respuesta.
 function requestJson(url, options, body = null) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : null;
@@ -68,6 +72,8 @@ export function getAdminToken() {
   return adminToken;
 }
 
+// shopifyFetch se usa para llamadas a la Storefront API.
+// Usa el token público `STOREFRONT_ACCESS_TOKEN` y está pensado para datos de tienda públicos.
 export async function shopifyFetch(query, variables = {}) {
   const url = new URL(`https://${env.shop}.myshopify.com/api/${env.apiVersion}/graphql.json`);
   const body = { query, variables };
@@ -92,6 +98,8 @@ export async function shopifyFetch(query, variables = {}) {
   return json.data;
 }
 
+// adminFetch se usa para llamadas a la Admin API.
+// Requiere `adminToken` cargado en memoria o en variables de entorno.
 export async function adminFetch(query, variables = {}) {
   if (!adminToken) {
     throw new Error("No hay token de Admin API. Visita http://localhost:4000/api/auth para autenticar.");

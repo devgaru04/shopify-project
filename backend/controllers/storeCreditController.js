@@ -1,5 +1,6 @@
 import { creditCustomerStoreBalance } from "../services/storeCreditService.js";
 
+// Asigna crédito de tienda a un cliente Shopify usando Admin API.
 export async function assignStoreCreditToCustomer(req, res) {
   try {
     const { customerId, amount, currency = "USD" } = req.body || {};

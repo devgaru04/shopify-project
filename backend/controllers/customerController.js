@@ -1,5 +1,6 @@
 import { shopifyFetch, adminFetch } from "../services/shopifyService.js";
 
+// Cache local temporal de clientes encontrados o creados en la sesión.
 const localCustomers = [];
 
 function normalizeCustomer(customer) {
@@ -117,6 +118,7 @@ async function searchCustomerByEmail(email) {
   }
 }
 
+// Busca una orden en Shopify Admin API por número de orden.
 async function searchCustomerByOrder(orderNumber) {
   const normalized = orderNumber.trim();
   if (!normalized) {
@@ -180,6 +182,7 @@ export async function findCustomerByOrder(req, res) {
   }
 }
 
+// Busca o crea un cliente en Shopify. Primero revisa cache local y luego Shopify.
 export async function findOrCreateCustomer(req, res) {
   try {
     const { email, firstName = "", lastName = "", password = "" } = req.body;
