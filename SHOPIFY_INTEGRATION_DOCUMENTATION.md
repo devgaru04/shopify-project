@@ -65,11 +65,35 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
   - Descripción: lista productos y variantes.
   - Shopify: Storefront API query `Products(first: 20)`.
   - Respuesta: arreglo de productos con `id`, `title`, `description`, `handle`, `priceRange`, `options`, `images`, `variants`.
+  - Request example: `GET /api/products` (no body)
+  - Response example:
+
+```json
+[
+  {
+    "id": "gid://shopify/Product/1234567890",
+    "title": "Example Product",
+    "handle": "example-product",
+    "priceRange": { "min": "19.99", "max": "29.99" }
+  }
+]
+```
 
 - `GET /api/products/:handle`
   - Descripción: obtiene producto por handle.
   - Shopify: Storefront API query `ProductByHandle(handle: $handle)`.
   - Respuesta: objeto del producto con variantes e imágenes.
+  - Request example: `GET /api/products/example-product`
+  - Response example:
+
+```json
+{
+  "id": "gid://shopify/Product/1234567890",
+  "title": "Example Product",
+  "handle": "example-product",
+  "variants": [ { "id": "gid://shopify/ProductVariant/111", "price": "19.99" } ]
+}
+```
 
 - `POST /api/checkout`
   - Descripción: crea carrito y genera `checkoutUrl`.
@@ -78,6 +102,23 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
     - `discountCode` (opcional)
   - Shopify: Storefront API mutation `CartCreate(input: CartInput!)`.
   - Respuesta: datos del carrito con `checkoutUrl`.
+  - Request example:
+
+```json
+{
+  "lines": [ { "merchandiseId": "gid://shopify/ProductVariant/111", "quantity": 1 } ],
+  "discountCode": "SUMMER10"
+}
+```
+
+  - Response example:
+
+```json
+{
+  "checkoutUrl": "https://mi-tienda.myshopify.com/cart/111:1?discount=SUMMER10",
+  "cartId": "gid://shopify/Cart/987654321"
+}
+```
 
 ### Clientes
 
@@ -90,6 +131,25 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
     - `password`
   - Shopify: Storefront API mutation `customerCreate(input: CustomerCreateInput!)`.
   - Respuesta: `customer` con `id`, `email`, `firstName`, `lastName`.
+  - Request example:
+
+```json
+{
+  "email": "mauro@example.com",
+  "firstName": "Mauro",
+  "lastName": "Test",
+  "password": "s3cr3tP@ss"
+}
+```
+
+  - Response example:
+
+```json
+{
+  "success": true,
+  "customer": { "id": "gid://shopify/Customer/24832550928544", "email": "mauro@example.com", "firstName": "Mauro", "lastName": "Test" }
+}
+```
 
 - `POST /api/find-or-create-customer`
   - Descripción: busca un cliente por email en Shopify (Admin API). Si no existe, lo crea.
@@ -100,15 +160,44 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
     - `password` (opcional)
   - Shopify: Admin API query `customers(first: 1, query: $query)` y mutation `customerCreate`.
   - Respuesta: `customer` con `id`, `email`, `firstName`, `lastName`.
+  - Request example:
+
+```json
+{ "email": "mauro@example.com", "firstName": "Mauro", "lastName": "Test" }
+```
+
+  - Response example (found):
+
+```json
+{ "success": true, "customer": { "id": "gid://shopify/Customer/24832550928544", "email": "mauro@example.com" } }
+```
+
+  - Response example (created):
+
+```json
+{ "success": true, "created": true, "customer": { "id": "gid://shopify/Customer/999999999", "email": "mauro@example.com" } }
+```
 
 - `GET /api/shopify-customers?first=250`
   - Descripción: lista hasta `first` clientes de Shopify.
   - Shopify: Admin API query `customers(first: $first)`.
   - Respuesta: arreglo de clientes simplificado.
+  - Request example: `GET /api/shopify-customers?first=50`
+  - Response example:
+
+```json
+{ "customers": [ { "id": "gid://shopify/Customer/1", "email": "a@x.com" } ] }
+```
 
 - `GET /api/customers`
   - Descripción: lista clientes locales en memoria creados durante la sesión.
   - Respuesta: arreglo de clientes guardados en `localCustomers`.
+  - Request example: `GET /api/customers`
+  - Response example:
+
+```json
+[ { "id": "local-1", "email": "temp@local" } ]
+```
 
 - `POST /api/find-customer-by-order`
   - Descripción: busca una orden por número y devuelve datos de la orden + cliente.
@@ -116,6 +205,30 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
     - `orderNumber`
   - Shopify: Admin API query `orders(first: 1, query: $query)` con `name`.
   - Respuesta: `order` con campos `id`, `name`, `email`, `customer { id, email, firstName, lastName }`.
+  - Request example:
+
+```json
+{ "orderNumber": "#1004" }
+```
+
+  - Response example:
+
+```json
+{
+  "success": true,
+  "order": {
+    "id": "gid://shopify/Order/7839363432608",
+    "name": "#1004",
+    "email": "mauro1234@yopmail.com",
+    "customer": {
+      "id": "gid://shopify/Customer/24832550928544",
+      "email": "mauro1234@yopmail.com",
+      "firstName": "mauro",
+      "lastName": "test"
+    }
+  }
+}
+```
 
 ### Descuentos
 
@@ -155,6 +268,72 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
   - Comentarios de cronología:
     - Se intenta `commentEventCreate`.
     - Si Shopify no soporta esa mutación, se guarda como `metafieldsSet` en el descuento.
+  - Motivo por el que puede no añadirse el comentario dentro del flujo de descuentos:
+    - Shopify Admin GraphQL actualmente no expone una mutación que añada directamente comentarios de cronología (`commentEventCreate`) sobre recursos de tipo descuento/`DiscountCodeNode`. En muchos catálogos de la API la creación de eventos de comentario está limitada a recursos como `Order` u otros objetos que soportan eventos de cronología; los `Discount` no siempre son admitidos.
+    - También puede requerirse un scope/permiso que no esté disponible para la app (aunque el permiso `write_discounts` permite crear descuentos, no garantiza soporte de mutaciones de comentario sobre el recurso).
+    - Por eso el flujo está diseñado con un fallback que guarda la nota como un `metafield` en el recurso del descuento, preservando la información de la nota incluso cuando la mutación de comentario no está soportada.
+
+  - Ejemplo de respuesta cuando se usa el fallback (nota guardada en `metafield`):
+
+```json
+{
+  "success": true,
+  "discountCode": "SJN11",
+  "discount": {
+    "codeDiscountNode": {
+      "id": "gid://shopify/DiscountCodeNode/1729154777248",
+      "codeDiscount": {
+        "title": "ADS",
+        "status": "ACTIVE",
+        "startsAt": "2026-08-11T19:37:16Z",
+        "createdAt": "2026-08-11T19:37:16Z"
+      }
+    },
+    "userErrors": []
+  },
+  "warning": "El descuento se creó y se guardó la nota como metafield porque la mutación de comentario no está disponible para descuentos."
+}
+```
+
+  - Recomendaciones:
+    - Revisar periódicamente la documentación de la Admin API por si Shopify añade soporte para `commentEventCreate` sobre `Discount` u ofrece una mutación equivalente.
+    - Conservar la nota en `metafields` con un `namespace` y `key` claros (por ejemplo `admin_notes.note`) para facilitar búsquedas y migraciones si en el futuro se soporta un timeline nativo.
+  - Request example (`/api/create-discount`):
+
+```json
+{
+  "code": "VIP20OFF",
+  "title": "20% for VIP",
+  "type": "percentage",
+  "value": 0.2,
+  "tags": "vip,newsletter",
+  "timelineComment": "Assigned via admin tool"
+}
+```
+
+  - Response example (create):
+
+```json
+{ "success": true, "discount": { "code": "VIP20OFF", "id": "gid://shopify/DiscountCodeNode/1057856785" } }
+```
+
+  - Request example (`/api/assign-discount-to-customer`):
+
+```json
+{
+  "customerId": "gid://shopify/Customer/24832550928544",
+  "code": "VIP20OFF",
+  "title": "20% for VIP",
+  "type": "percentage",
+  "value": 0.2
+}
+```
+
+  - Response example (assign):
+
+```json
+{ "success": true, "assigned": true, "discount": { "code": "VIP20OFF" }, "customerId": "gid://shopify/Customer/24832550928544" }
+```
 
 ### Créditos de tienda
 
@@ -166,6 +345,23 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
     - `currency` (opcional, default `USD`)
   - Shopify: Admin API mutation `storeCreditAccountCredit(id: $id, creditInput: $creditInput)`.
   - Respuesta: información de la transacción y saldo.
+  - Request example:
+
+```json
+{ "customerId": "gid://shopify/Customer/24832550928544", "amount": "49.99", "currency": "USD" }
+```
+
+  - Response example:
+
+```json
+{
+  "success": true,
+  "transaction": {
+    "amount": { "amount": "49.99", "currencyCode": "USD" },
+    "account": { "id": "gid://shopify/StoreCreditAccount/316863792", "balance": { "amount": "61.10", "currencyCode": "USD" } }
+  }
+}
+```
 
 ### Autenticación Admin API
 
@@ -182,6 +378,27 @@ Este archivo contiene los wrappers para hacer requests GraphQL a Shopify.
 - `POST /api/auth/token`
   - Permite configurar el token manualmente en el backend.
   - Request body: `{ access_token }`.
+  - Request/Response examples:
+
+`GET /api/auth` — redirección al OAuth de Shopify (sin body).
+
+`GET /api/auth/token` — Response example:
+
+```json
+{ "access_token": "shpat_XXXX..." }
+```
+
+`POST /api/auth/token` — Request example:
+
+```json
+{ "access_token": "shpat_XXXX..." }
+```
+
+`POST /api/auth/token` — Response example:
+
+```json
+{ "success": true, "message": "Admin token saved" }
+```
 
 ---
 
